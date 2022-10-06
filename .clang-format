@@ -1,0 +1,22 @@
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+# https://www.bbsmax.com/A/VGzlMjexJb/
+ 
+# 语言: None, Cpp, Java, JavaScript, ObjC, Proto, TableGen, TextProto
+Language: Cpp
+ 
+BasedOnStyle: LLVM
+
+# 每行字符的限制，0表示没有限制
+ColumnLimit: 0
+
+# 命名空间的缩进: None, Inner(缩进嵌套的命名空间中的内容), All
+NamespaceIndentation: All
+
+# 缩进宽度
+IndentWidth: 4
+
+# 对齐连续的尾随的注释
+AlignTrailingComments: true
+
+# 访问说明符(public、private等)的偏移
+AccessModifierOffset: -4
