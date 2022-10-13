@@ -14,19 +14,19 @@ local function number_address(name)
 end
 
 function skynet.launch(...)
-	local addr = c.command("LAUNCH", table.concat({...}," "))
+	local addr = c.command("LAUNCH", table.concat({ ... }, " ")) --调用cmd_launch
 	if addr then
-		return tonumber(string.sub(addr , 2), 16)
+		return tonumber(string.sub(addr, 2), 16)
 	end
 end
 
 function skynet.kill(name)
 	local addr = number_address(name)
 	if addr then
-		skynet.send(".launcher","lua","REMOVE", addr, true)
+		skynet.send(".launcher", "lua", "REMOVE", addr, true)
 		name = skynet.address(addr)
 	end
-	c.command("KILL",name)
+	c.command("KILL", name)
 end
 
 function skynet.abort()
@@ -34,14 +34,14 @@ function skynet.abort()
 end
 
 local function globalname(name, handle)
-	local c = string.sub(name,1,1)
+	local c = string.sub(name, 1, 1)
 	assert(c ~= ':')
 	if c == '.' then
 		return false
 	end
 
-	assert(#name < 16)	-- GLOBALNAME_LENGTH is 16, defined in skynet_harbor.h
-	assert(tonumber(name) == nil)	-- global name can't be number
+	assert(#name < 16) -- GLOBALNAME_LENGTH is 16, defined in skynet_harbor.h
+	assert(tonumber(name) == nil) -- global name can't be number
 
 	local harbor = require "skynet.harbor"
 
@@ -82,7 +82,7 @@ function skynet.forward_type(map, start_func)
 	end)
 end
 
-function skynet.filter(f ,start_func)
+function skynet.filter(f, start_func)
 	c.callback(function(...)
 		dispatch_message(f(...))
 	end)

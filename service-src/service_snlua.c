@@ -26,8 +26,8 @@
 struct snlua {
     lua_State *L;
     struct skynet_context *ctx;
-    size_t mem;
-    size_t mem_report;
+    size_t mem;        //当前使用的内存
+    size_t mem_report; //内存警告临界值
     size_t mem_limit;
     lua_State *activeL;
     ATOM_INT trap;
@@ -413,7 +413,7 @@ init_cb(struct snlua *l, struct skynet_context *ctx, const char *args, size_t sz
     lua_setglobal(L, "LUA_CPATH");
     const char *service = optstring(ctx, "luaservice", "./service/?.lua");
     lua_pushstring(L, service);
-    lua_setglobal(L, "LUA_SERVICE");
+    lua_setglobal(L, "LUA_SERVICE"); //这样lua脚本里就可以拿到LUA_SERVICE
     const char *preload = skynet_command(ctx, "GETENV", "preload");
     lua_pushstring(L, preload);
     lua_setglobal(L, "LUA_PRELOAD");
@@ -429,8 +429,9 @@ init_cb(struct snlua *l, struct skynet_context *ctx, const char *args, size_t sz
         report_launcher_error(ctx);
         return 1;
     }
+    printf("init_cb:%s\n", args);
     lua_pushlstring(L, args, sz);
-    r = lua_pcall(L, 1, 0, 1);
+    r = lua_pcall(L, 1, 0, 1); //运行loader.lua，参数是服务名，如simpledb
     if (r != LUA_OK) {
         skynet_error(ctx, "lua loader error : %s", lua_tostring(L, -1));
         report_launcher_error(ctx);
@@ -469,11 +470,11 @@ int snlua_init(struct snlua *l, struct skynet_context *ctx, const char *args) {
     char *tmp = skynet_malloc(sz);
     memcpy(tmp, args, sz);
     skynet_callback(ctx, l, launch_cb);
-    const char *self = skynet_command(ctx, "REG", NULL);
-    printf("self:%s\n", self);
+    const char *self = skynet_command(ctx, "REG", NULL); //传入null这时并不是注册服务，而是返回服务的句柄
+    // printf("self:%s\n", self);                           //self::100000
     uint32_t handle_id = strtoul(self + 1, NULL, 16);
     // it must be first message
-    skynet_send(ctx, 0, handle_id, PTYPE_TAG_DONTCOPY, 0, tmp, sz);
+    skynet_send(ctx, 0, handle_id, PTYPE_TAG_DONTCOPY, 0, tmp, sz); //给自己发了一个消息，消息内容是 init传入的参数,这是底层框架的消息就触发了launch_cb。
     return 0;
 }
 

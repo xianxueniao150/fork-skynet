@@ -6,11 +6,11 @@
 typedef int poll_fd;
 
 struct event {
-	void * s;
-	bool read;
-	bool write;
-	bool error;
-	bool eof;
+    void *s;    // socket 实例指针，若s为null，表示是管道事件
+    bool read;  // 可读事件标识
+    bool write; // 可写事件标识
+    bool error; // 错误事件标识
+    bool eof;   // 文件尾(end-of-file)标识，kqueue专用
 };
 
 static bool sp_invalid(poll_fd fd);
@@ -26,7 +26,7 @@ static void sp_nonblocking(int sock);
 #include "socket_epoll.h"
 #endif
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined (__NetBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #include "socket_kqueue.h"
 #endif
 

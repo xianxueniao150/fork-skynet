@@ -11,7 +11,7 @@
 #define DEFAULT_SLOT_SIZE 4
 #define MAX_SLOT_SIZE 0x40000000
 
-struct handle_name {
+struct handle_name { //服务id和名字
     char *name;
     uint32_t handle;
 };

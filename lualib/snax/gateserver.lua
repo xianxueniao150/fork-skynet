@@ -4,9 +4,9 @@ local socketdriver = require "skynet.socketdriver"
 
 local gateserver = {}
 
-local socket	-- listen socket
-local queue		-- message queue
-local maxclient	-- max client
+local socket -- listen socket
+local queue -- message queue
+local maxclient -- max client
 local client_number = 0
 local CMD = setmetatable({}, { __gc = function() netpack.clear(queue) end })
 local nodelay = false
@@ -36,14 +36,14 @@ function gateserver.start(handler)
 
 	local listen_context = {}
 
-	function CMD.open( source, conf )
+	function CMD.open(source, conf)
 		assert(not socket)
 		local address = conf.address or "0.0.0.0"
 		local port = assert(conf.port)
 		maxclient = conf.maxclient or 1024
 		nodelay = conf.nodelay
 		skynet.error(string.format("Listen on %s:%d", address, port))
-		socket = socketdriver.listen(address, port)
+		socket = socketdriver.listen(address, port) --调用llisten
 		listen_context.co = coroutine.running()
 		listen_context.fd = socket
 		skynet.wait(listen_context.co)
@@ -67,7 +67,7 @@ function gateserver.start(handler)
 		if connection[fd] then
 			handler.message(fd, msg, sz)
 		else
-			skynet.error(string.format("Drop message from fd (%d) : %s", fd, netpack.tostring(msg,sz)))
+			skynet.error(string.format("Drop message from fd (%d) : %s", fd, netpack.tostring(msg, sz)))
 		end
 	end
 
@@ -106,7 +106,7 @@ function gateserver.start(handler)
 		if fd ~= socket then
 			client_number = client_number - 1
 			if connection[fd] then
-				connection[fd] = false	-- close read
+				connection[fd] = false -- close read
 			end
 			if handler.disconnect then
 				handler.disconnect(fd)
@@ -118,7 +118,7 @@ function gateserver.start(handler)
 
 	function MSG.error(fd, msg)
 		if fd == socket then
-			skynet.error("gateserver accept error:",msg)
+			skynet.error("gateserver accept error:", msg)
 		else
 			socketdriver.shutdown(fd)
 			if handler.error then
@@ -147,12 +147,13 @@ function gateserver.start(handler)
 	end
 
 	skynet.register_protocol {
-		name = "socket",
-		id = skynet.PTYPE_SOCKET,	-- PTYPE_SOCKET = 6
-		unpack = function ( msg, sz )
-			return netpack.filter( queue, msg, sz)
+		name = "socket", --socket类型消息主要来自于socket线程。
+		id = skynet.PTYPE_SOCKET, -- PTYPE_SOCKET = 6
+		unpack = function(msg, sz)
+			return netpack.filter(queue, msg, sz)
 		end,
-		dispatch = function (_, _, q, type, ...)
+		dispatch = function(_, _, q, type, ...)
+			print("type:", type)
 			queue = q
 			if type then
 				MSG[type](...)
@@ -161,7 +162,7 @@ function gateserver.start(handler)
 	}
 
 	local function init()
-		skynet.dispatch("lua", function (_, address, cmd, ...)
+		skynet.dispatch("lua", function(_, address, cmd, ...)
 			local f = CMD[cmd]
 			if f then
 				skynet.ret(skynet.pack(f(address, ...)))

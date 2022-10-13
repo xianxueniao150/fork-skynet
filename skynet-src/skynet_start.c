@@ -67,11 +67,14 @@ static void *thread_socket(void *p) {
     for (;;) {
         int r = skynet_socket_poll();
         if (r == 0)
+            // 退出网络轮询，即网络线程退出
             break;
         if (r < 0) {
             CHECK_ABORT
+            // 一般r=-1,表示还有剩余网络事件需要处理
             continue;
         }
+        // r>0, 表示捕获到新的网络事件，若所有worker全部都处于sleep，则唤醒一个
         wakeup(m, 0);
     }
     return NULL;
