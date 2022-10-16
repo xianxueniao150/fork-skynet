@@ -19,12 +19,12 @@
 #include <unistd.h>
 
 struct monitor {
-    int count;
-    struct skynet_monitor **m;
-    pthread_cond_t cond;
-    pthread_mutex_t mutex;
-    int sleep;
-    int quit;
+    int count;                 // worker 线程的总数
+    struct skynet_monitor **m; // 全部 worker 线程的 monitor 指针
+    pthread_cond_t cond;       // 给 worker 线程挂起用的全局条件
+    pthread_mutex_t mutex;     // 有锁结构
+    int sleep;                 // 睡眠的 worker 线程数量
+    int quit;                  // 退出标记
 };
 
 struct worker_parm {
@@ -95,13 +95,15 @@ static void free_monitor(struct monitor *m) {
 static void *thread_monitor(void *p) {
     struct monitor *m = p;
     int i;
-    int n = m->count;
-    skynet_initthread(THREAD_MONITOR);
+    int n = m->count;                  // 拿到 worker 线程的数量
+    skynet_initthread(THREAD_MONITOR); // 设置线程属性
     for (;;) {
         CHECK_ABORT
         for (i = 0; i < n; i++) {
             skynet_monitor_check(m->m[i]);
         }
+        // 睡眠 5s
+        // 使用循环分开调用是为了更快的触发 abort
         for (i = 0; i < 5; i++) {
             CHECK_ABORT
             sleep(1);
@@ -159,6 +161,7 @@ static void *thread_worker(void *p) {
     struct message_queue *q = NULL;
     while (!m->quit) {
         q = skynet_context_message_dispatch(sm, q, weight);
+        // 如果 q 是 NULL 的话，说明没有 pop 到要处理的消息队列，要把它投入到睡眠中去
         if (q == NULL) {
             if (pthread_mutex_lock(&m->mutex) == 0) {
                 ++m->sleep;

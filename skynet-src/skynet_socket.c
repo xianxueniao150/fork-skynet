@@ -60,7 +60,7 @@ static void forward_message(int type, bool padding, struct socket_message *resul
     message.source = 0;
     message.session = 0;
     message.data = sm;
-    message.sz = sz | ((size_t)PTYPE_SOCKET << MESSAGE_TYPE_SHIFT);
+    message.sz = sz | ((size_t)PTYPE_SOCKET << MESSAGE_TYPE_SHIFT); //这里把type=6放进去了
 
     if (skynet_context_push((uint32_t)result->opaque, &message)) {
         // todo: report somewhere to close socket

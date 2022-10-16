@@ -48,17 +48,17 @@ struct skynet_context {
     void *cb_ud;                 // 调用callback函数时，回传给callback的userdata，一般是instance指针
     skynet_cb cb;                // 服务的消息回调函数，一般在skynet_module的init函数里指定
     struct message_queue *queue; // 服务专属的次级消息队列指针
-    ATOM_POINTER logfile;
-    uint64_t cpu_cost;  // in microsec
-    uint64_t cpu_start; // in microsec
-    char result[32];    // 操作skynet_context的返回值，会写到这里
-    uint32_t handle;    // 标识唯一context的服务id
-    int session_id;     // 在发出请求后，收到对方的返回消息时，通过session_id来匹配一个返回，对应哪个请求
-    ATOM_INT ref;       // 引用计数变量，当为0时，表示内存可以被释放
-    int message_count;
-    bool init;
-    bool endless;
-    bool profile;
+    ATOM_POINTER logfile;        // 文件指针是个原子指针
+    uint64_t cpu_cost;           // in microsec,消耗的总 cpu 时间
+    uint64_t cpu_start;          // in microsec,本次消息处理的起始时间点
+    char result[32];             // 操作skynet_context的返回值，会写到这里
+    uint32_t handle;             // 标识唯一context的服务id
+    int session_id;              // 在发出请求后，收到对方的返回消息时，通过session_id来匹配一个返回，对应哪个请求
+    ATOM_INT ref;                // 引用计数变量，当为0时，表示内存可以被释放
+    int message_count;           // 处理过的消息总数
+    bool init;                   // 初始化完成标记
+    bool endless;                // 死循环标志
+    bool profile;                // 是否开启了 profile
 
     CHECKCALLING_DECL
 };
@@ -113,7 +113,8 @@ static void drop_message(struct skynet_message *msg, void *ud) {
     skynet_send(NULL, source, msg->source, PTYPE_ERROR, 0, NULL, 0);
 }
 
-struct skynet_context *skynet_context_new(const char *name, const char *param) {
+struct skynet_context *
+skynet_context_new(const char *name, const char *param) {
     struct skynet_module *mod = skynet_module_query(name);
 
     if (mod == NULL)
@@ -187,7 +188,7 @@ int skynet_context_newsession(struct skynet_context *ctx) {
     return session;
 }
 
-void skynet_context_grab(struct skynet_context *ctx) { ATOM_FINC(&ctx->ref); }
+void skynet_context_grab(struct skynet_context *ctx) { ATOM_FINC(&ctx->ref); } //增加服务的引用计数
 
 void skynet_context_reserve(struct skynet_context *ctx) {
     skynet_context_grab(ctx);
@@ -209,7 +210,7 @@ static void delete_context(struct skynet_context *ctx) {
     context_dec();
 }
 
-struct skynet_context *skynet_context_release(struct skynet_context *ctx) {
+struct skynet_context *skynet_context_release(struct skynet_context *ctx) { //减少服务的引用计数
     if (ATOM_FDEC(&ctx->ref) == 1) {
         delete_context(ctx);
         return NULL;
@@ -295,7 +296,7 @@ struct message_queue *skynet_context_message_dispatch(struct skynet_monitor *sm,
     uint32_t handle = skynet_mq_handle(q);
 
     struct skynet_context *ctx = skynet_handle_grab(handle);
-    if (ctx == NULL) {
+    if (ctx == NULL) { // 如果拿不到对应的服务，说明这消息队列被废弃了
         struct drop_t d = {handle};
         skynet_mq_release(q, drop_message, &d);
         return skynet_globalmq_pop();
@@ -305,7 +306,7 @@ struct message_queue *skynet_context_message_dispatch(struct skynet_monitor *sm,
     struct skynet_message msg;
 
     for (i = 0; i < n; i++) {
-        if (skynet_mq_pop(q, &msg)) {
+        if (skynet_mq_pop(q, &msg)) { // 拿不到消息，直接返回
             skynet_context_release(ctx);
             return skynet_globalmq_pop();
         } else if (i == 0 && weight >= 0) {
@@ -317,7 +318,7 @@ struct message_queue *skynet_context_message_dispatch(struct skynet_monitor *sm,
             skynet_error(ctx, "May overload, message queue length = %d", overload);
         }
 
-        skynet_monitor_trigger(sm, msg.source, handle);
+        skynet_monitor_trigger(sm, msg.source, handle); // 更新 monitor 的记录和计数
 
         if (ctx->cb == NULL) {
             skynet_free(msg.data);
@@ -325,7 +326,7 @@ struct message_queue *skynet_context_message_dispatch(struct skynet_monitor *sm,
             dispatch_message(ctx, &msg);
         }
 
-        skynet_monitor_trigger(sm, 0, 0);
+        skynet_monitor_trigger(sm, 0, 0);// 更新 monitor 的记录和计数
     }
 
     //当完成callback函数调用时，就从global_mq中再pop一个次级消息队列中，供下一次使用，并将本次使用的次级消息队列push回global_mq的尾部

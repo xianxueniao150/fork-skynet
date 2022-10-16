@@ -52,7 +52,7 @@ struct callback_context {
 
 static int
 _cb(struct skynet_context *context, void *ud, int type, int session, uint32_t source, const void *msg, size_t sz) {
-    struct callback_context *cb_ctx = (struct callback_context *)ud;
+    struct callback_context *cb_ctx = (struct callback_context *)ud; //在下面的lcallback放进去的
     lua_State *L = cb_ctx->L;
     int trace = 1;
     int r;
@@ -64,7 +64,7 @@ _cb(struct skynet_context *context, void *ud, int type, int session, uint32_t so
     lua_pushinteger(L, session);
     lua_pushinteger(L, source);
 
-    r = lua_pcall(L, 5, 0, trace);
+    r = lua_pcall(L, 5, 0, trace); //调用lua函数，即skynet.dispatch_message
 
     if (r == LUA_OK) {
         return 0;
@@ -102,10 +102,10 @@ lcallback(lua_State *L) {
     lua_settop(L, 1);
     struct callback_context *cb_ctx = (struct callback_context *)lua_newuserdata(L, sizeof(*cb_ctx));
     cb_ctx->L = lua_newthread(L);
-    lua_pushcfunction(cb_ctx->L, traceback);
+    lua_pushcfunction(cb_ctx->L, traceback); //栈底是traceback
     lua_setuservalue(L, -2);
     lua_setfield(L, LUA_REGISTRYINDEX, "callback_context");
-    lua_xmove(L, cb_ctx->L, 1);
+    lua_xmove(L, cb_ctx->L, 1); //将回调函数从L移到cb_ctx->L栈上
 
     if (forward) {
         skynet_callback(context, cb_ctx, forward_cb);

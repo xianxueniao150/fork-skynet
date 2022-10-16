@@ -24,13 +24,13 @@
 #define MEMORY_WARNING_REPORT (1024 * 1024 * 32)
 
 struct snlua {
-    lua_State *L;
-    struct skynet_context *ctx;
-    size_t mem;        //当前使用的内存
-    size_t mem_report; //内存警告临界值
-    size_t mem_limit;
-    lua_State *activeL;
-    ATOM_INT trap;
+    lua_State *L;               // 状态机
+    struct skynet_context *ctx; // 关联的 skynet context
+    size_t mem;                 // 已经使用的内存
+    size_t mem_report;          // 触发内存警告的阈值
+    size_t mem_limit;           // 内存的上限设置
+    lua_State *activeL;         // 目前正在运行的状态机
+    ATOM_INT trap;              // 打断状态
 };
 
 // LUA_CACHELIB may defined in patched lua for shared proto
@@ -386,7 +386,7 @@ init_cb(struct snlua *l, struct skynet_context *ctx, const char *args, size_t sz
     lua_pushboolean(L, 1); /* signal for libraries to ignore env. vars. */
     lua_setfield(L, LUA_REGISTRYINDEX, "LUA_NOENV");
     luaL_openlibs(L);
-    luaL_requiref(L, "skynet.profile", init_profile, 0);
+    luaL_requiref(L, "skynet.profile", init_profile, 0); //加载 skynet.profile 库
 
     int profile_lib = lua_gettop(L);
     // replace coroutine.resume / coroutine.wrap
@@ -400,11 +400,11 @@ init_cb(struct snlua *l, struct skynet_context *ctx, const char *args, size_t sz
 
     lua_pushlightuserdata(L, ctx);
     lua_setfield(L, LUA_REGISTRYINDEX, "skynet_context");
-    luaL_requiref(L, "skynet.codecache", codecache, 0);
+    luaL_requiref(L, "skynet.codecache", codecache, 0); //加载 skynet.codecache 库
     lua_pop(L, 1);
 
     lua_gc(L, LUA_GCGEN, 0, 0);
-
+    //从环境变量中拿取配置的那些文件加载的地址数据，加载进来
     const char *path = optstring(ctx, "lua_path", "./lualib/?.lua;./lualib/?/init.lua");
     lua_pushstring(L, path);
     lua_setglobal(L, "LUA_PATH");
@@ -438,7 +438,7 @@ init_cb(struct snlua *l, struct skynet_context *ctx, const char *args, size_t sz
         return 1;
     }
     lua_settop(L, 0);
-    if (lua_getfield(L, LUA_REGISTRYINDEX, "memlimit") == LUA_TNUMBER) {
+    if (lua_getfield(L, LUA_REGISTRYINDEX, "memlimit") == LUA_TNUMBER) { //检查是否设置了 lua 服务的内存上限，如果有则要设置
         size_t limit = lua_tointeger(L, -1);
         l->mem_limit = limit;
         skynet_error(ctx, "Set memory limit to %.2f M", (float)limit / (1024 * 1024));
@@ -482,16 +482,16 @@ static void *
 lalloc(void *ud, void *ptr, size_t osize, size_t nsize) {
     struct snlua *l = ud;
     size_t mem = l->mem;
-    l->mem += nsize;
+    l->mem += nsize; //修改当前占用的内存 mem
     if (ptr)
         l->mem -= osize;
-    if (l->mem_limit != 0 && l->mem > l->mem_limit) {
+    if (l->mem_limit != 0 && l->mem > l->mem_limit) { //检查内存分配上限 mem_limit，如果超了上限不能分配
         if (ptr == NULL || nsize > osize) {
             l->mem = mem;
             return NULL;
         }
     }
-    if (l->mem > l->mem_report) {
+    if (l->mem > l->mem_report) { //超过了阈值，要给出警告，并且把警告阈值翻倍
         l->mem_report *= 2;
         skynet_error(l->ctx, "Memory warning %.2f M", (float)l->mem / (1024 * 1024));
     }
@@ -504,7 +504,7 @@ snlua_create(void) {
     memset(l, 0, sizeof(*l));
     l->mem_report = MEMORY_WARNING_REPORT;
     l->mem_limit = 0;
-    l->L = lua_newstate(lalloc, l);
+    l->L = lua_newstate(lalloc, l); //创建状态机的时候，把 snlua 的指针也传进去了，这个在协程部分会用到
     l->activeL = NULL;
     ATOM_INIT(&l->trap, 0);
     return l;

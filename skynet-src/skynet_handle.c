@@ -17,16 +17,16 @@ struct handle_name { //服务id和名字
 };
 
 struct handle_storage {
-    struct rwlock lock;
+    struct rwlock lock; // 读写锁，因为读取的频率远远高于写入
 
-    uint32_t harbor;
-    uint32_t handle_index;
-    int slot_size;
-    struct skynet_context **slot;
+    uint32_t harbor;              // 本节点的 harbor id
+    uint32_t handle_index;        // 当前的索引值，会累加
+    int slot_size;                // slot 的长度
+    struct skynet_context **slot; // 全部 ctx
 
-    int name_cap;
-    int name_count;
-    struct handle_name *name;
+    int name_cap;             // 名字列表的容量,可扩容
+    int name_count;           // 名字列表的总数
+    struct handle_name *name; // 保存全部的名字,有序，所以可以用二分查找
 };
 
 static struct handle_storage *H = NULL;
@@ -39,12 +39,12 @@ uint32_t skynet_handle_register(struct skynet_context *ctx) {
     for (;;) {
         int i;
         uint32_t handle = s->handle_index;
-        for (i = 0; i < s->slot_size; i++, handle++) {
+        for (i = 0; i < s->slot_size; i++, handle++) { //遍历slot
             if (handle > HANDLE_MASK) {
                 // 0 is reserved
                 handle = 1;
             }
-            int hash = handle & (s->slot_size - 1);
+            int hash = handle & (s->slot_size - 1); //slot 的 key 是通过 handle 对 slot_size 取余数得来的
             if (s->slot[hash] == NULL) {
                 s->slot[hash] = ctx;
                 s->handle_index = handle + 1;
@@ -55,6 +55,7 @@ uint32_t skynet_handle_register(struct skynet_context *ctx) {
                 return handle;
             }
         }
+        //把 slot 扩容到原先的两倍
         assert((s->slot_size * 2 - 1) <= HANDLE_MASK);
         struct skynet_context **new_slot =
             skynet_malloc(s->slot_size * 2 * sizeof(struct skynet_context *));
@@ -133,6 +134,7 @@ void skynet_handle_retireall() {
     }
 }
 
+//通过 handle 直接查询到服务的地址
 struct skynet_context *skynet_handle_grab(uint32_t handle) {
     struct handle_storage *s = H;
     struct skynet_context *result = NULL;
@@ -151,6 +153,7 @@ struct skynet_context *skynet_handle_grab(uint32_t handle) {
     return result;
 }
 
+//通过名字查找服务ID
 uint32_t skynet_handle_findname(const char *name) {
     struct handle_storage *s = H;
 
@@ -182,7 +185,7 @@ uint32_t skynet_handle_findname(const char *name) {
 
 static void _insert_name_before(struct handle_storage *s, char *name,
                                 uint32_t handle, int before) {
-    if (s->name_count >= s->name_cap) {
+    if (s->name_count >= s->name_cap) { //扩容
         s->name_cap *= 2;
         assert(s->name_cap <= MAX_SLOT_SIZE);
         struct handle_name *n =
@@ -211,11 +214,11 @@ static const char *_insert_name(struct handle_storage *s, const char *name,
                                 uint32_t handle) {
     int begin = 0;
     int end = s->name_count - 1;
-    while (begin <= end) {
+    while (begin <= end) { //二分查找
         int mid = (begin + end) / 2;
         struct handle_name *n = &s->name[mid];
         int c = strcmp(n->name, name);
-        if (c == 0) {
+        if (c == 0) { //如果查到了，则说明名字重复了，返回 NULL，不会覆盖旧名字
             return NULL;
         }
         if (c < 0) {
@@ -231,6 +234,7 @@ static const char *_insert_name(struct handle_storage *s, const char *name,
     return result;
 }
 
+//注册名字
 const char *skynet_handle_namehandle(uint32_t handle, const char *name) {
     rwlock_wlock(&H->lock);
 

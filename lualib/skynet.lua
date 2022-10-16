@@ -774,7 +774,8 @@ end
 
 local trace_source = {}
 
-local function raw_dispatch_message(prototype, msg, sz, session, source)
+local function raw_dispatch_message(prototype, msg, sz, session, source) --通过_cb传递
+	print("raw_dispatch_message", prototype, msg, sz, session, source)
 	-- skynet.PTYPE_RESPONSE = 1, read skynet.h
 	if prototype == 1 then --自己发起同步调用（调用call）后，获得的返回结果
 		local co = session_id_coroutine[session] --先根据session找到先前挂起的协程地址

@@ -74,7 +74,7 @@ function gateserver.start(handler)
 	MSG.data = dispatch_msg
 
 	local function dispatch_queue()
-		local fd, msg, sz = netpack.pop(queue)
+		local fd, msg, sz = netpack.pop(queue) --调用lpop
 		if fd then
 			-- may dispatch even the handler.message blocked
 			-- If the handler.message never block, the queue should be empty, so only fork once and then exit.
