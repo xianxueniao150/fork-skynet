@@ -28,13 +28,14 @@
 
 struct buffer_node {
     char *msg;
-    int sz;
-    struct buffer_node *next;
+    int sz;                   //该buffer_node存储的数据size
+    struct buffer_node *next; //通过修改 next 的指向，可以将一个 buff_node 在空闲队列和数据链表之间切换
 };
 
+//存放所有未读取的数据
 struct socket_buffer {
-    int size;                 // 已经收到的网络数据总长度
-    int offset;               // 当前 buff_node 已读数据的偏移
+    int size;                 // 还未读取的网络数据总长度
+    int offset;               // head 已读数据的偏移
     struct buffer_node *head; // 数据buff_node链表的头部指针
     struct buffer_node *tail;
 };
@@ -56,7 +57,7 @@ lfreepool(lua_State *L) {
 
 static int
 lnewpool(lua_State *L, int sz) {
-    struct buffer_node *pool = lua_newuserdatauv(L, sizeof(struct buffer_node) * sz, 0);
+    struct buffer_node *pool = lua_newuserdatauv(L, sizeof(struct buffer_node) * sz, 0); //新建pool的一个表项，并放到栈顶
     int i;
     for (i = 0; i < sz; i++) {
         pool[i].msg = NULL;
@@ -64,11 +65,11 @@ lnewpool(lua_State *L, int sz) {
         pool[i].next = &pool[i + 1];
     }
     pool[sz - 1].next = NULL;
-    if (luaL_newmetatable(L, "buffer_pool")) {
+    if (luaL_newmetatable(L, "buffer_pool")) { //只有第一次执行时，表不存在才会返回1,不过存不存在都会把表压栈
         lua_pushcfunction(L, lfreepool);
         lua_setfield(L, -2, "__gc");
     }
-    lua_setmetatable(L, -2);
+    lua_setmetatable(L, -2); //把一张表弹出栈，并将其设为给定索引处的值的元表。
     return 1;
 }
 
@@ -90,6 +91,14 @@ lnewbuffer(lua_State *L) {
 	int size
 
 	return size
+
+pool = {
+	[1] = free_node, -- 一个空闲的buff_node
+	[2] = buffer_node_pool, -- 存放16个buff_node
+	[3] = buffer_node_pool, -- 存放32个buff_node
+	...
+	[32] = buffer_node_pool, -- 存放4096个buff_node
+}
 
 	Comment: The table pool record all the buffers chunk, 
 	and the first index [1] is a lightuserdata : free_node. We can always use this pointer for struct buffer_node .
@@ -113,14 +122,15 @@ lpushbuffer(lua_State *L) {
     int pool_index = 2;
     luaL_checktype(L, pool_index, LUA_TTABLE);
     int sz = luaL_checkinteger(L, 4);
-    lua_rawgeti(L, pool_index, 1);
-    struct buffer_node *free_node = lua_touserdata(L, -1); // sb poolt msg size free_node
+    lua_rawgeti(L, pool_index, 1);                         //把pool[1]压栈
+    struct buffer_node *free_node = lua_touserdata(L, -1); // 拿到pool[1]处存的 free_node
     lua_pop(L, 1);
-    if (free_node == NULL) {
-        int tsz = lua_rawlen(L, pool_index);
+    if (free_node == NULL) {                 //为 null，则表示已经没有空闲的 buff_node
+        int tsz = lua_rawlen(L, pool_index); //拿到作为pool的table的元素个数
         if (tsz == 0)
             tsz++;
         int size = 8;
+        //每次*2,达到4096就不再增了
         if (tsz <= LARGE_PAGE_NODE - 3) {
             size <<= tsz;
         } else {
@@ -128,17 +138,20 @@ lpushbuffer(lua_State *L) {
         }
         lnewpool(L, size);
         free_node = lua_touserdata(L, -1);
-        lua_rawseti(L, pool_index, tsz + 1);
+        lua_rawseti(L, pool_index, tsz + 1); //弹出栈顶值并赋值给pool[tsz+1]
         if (tsz > POOL_SIZE_WARNING) {
             skynet_error(NULL, "Too many socket pool (%d)", tsz);
         }
     }
-    lua_pushlightuserdata(L, free_node->next);
-    lua_rawseti(L, pool_index, 1); // sb poolt msg size
+    lua_pushlightuserdata(L, free_node->next); // 将free_node 指向的下一个空闲 buff_node 指针赋值到 pool[1]
+    lua_rawseti(L, pool_index, 1);             // pool[1]重新赋值到pool里
+
+    //将网络数据的指针和大小保存在这个空闲的 buff_node上
     free_node->msg = msg;
     free_node->sz = sz;
     free_node->next = NULL;
 
+    //把存储了数据的 buff_node 插入到sb的尾部
     if (sb->head == NULL) {
         assert(sb->tail == NULL);
         sb->head = sb->tail = free_node;
@@ -153,6 +166,7 @@ lpushbuffer(lua_State *L) {
     return 1;
 }
 
+//取出sb头结点，清空，并将它塞入到pool[1]里作为头结点(重新放回到缓冲池里)
 static void
 return_free_node(lua_State *L, int pool, struct socket_buffer *sb) {
     struct buffer_node *free_node = sb->head;
@@ -161,7 +175,7 @@ return_free_node(lua_State *L, int pool, struct socket_buffer *sb) {
     if (sb->head == NULL) {
         sb->tail = NULL;
     }
-    lua_rawgeti(L, pool, 1);
+    lua_rawgeti(L, pool, 1); //pool[1]压栈
     free_node->next = lua_touserdata(L, -1);
     lua_pop(L, 1);
     skynet_free(free_node->msg);
@@ -175,12 +189,12 @@ return_free_node(lua_State *L, int pool, struct socket_buffer *sb) {
 static void
 pop_lstring(lua_State *L, struct socket_buffer *sb, int sz, int skip) {
     struct buffer_node *current = sb->head;
-    if (sz < current->sz - sb->offset) { //如果有足够数据
+    if (sz < current->sz - sb->offset) { //如果有足够数据,并且还有多的
         lua_pushlstring(L, current->msg + sb->offset, sz - skip);
         sb->offset += sz;
         return;
     }
-    if (sz == current->sz - sb->offset) {
+    if (sz == current->sz - sb->offset) { //刚好够
         lua_pushlstring(L, current->msg + sb->offset, sz - skip);
         return_free_node(L, 2, sb);
         return;
@@ -189,7 +203,7 @@ pop_lstring(lua_State *L, struct socket_buffer *sb, int sz, int skip) {
     luaL_Buffer b;
     luaL_buffinitsize(L, &b, sz);
     for (;;) {
-        int bytes = current->sz - sb->offset;
+        int bytes = current->sz - sb->offset; //sb当前节点可读的数据
         if (bytes >= sz) {
             if (sz > skip) {
                 luaL_addlstring(&b, current->msg + sb->offset, sz - skip);
@@ -246,7 +260,7 @@ lpopbuffer(lua_State *L) {
     }
     luaL_checktype(L, 2, LUA_TTABLE);
     int sz = luaL_checkinteger(L, 3);
-    if (sb->size < sz || sz == 0) {
+    if (sb->size < sz || sz == 0) { //如果此次没有足够的数据可读
         lua_pushnil(L);
     } else {
         pop_lstring(L, sb, sz, 0);

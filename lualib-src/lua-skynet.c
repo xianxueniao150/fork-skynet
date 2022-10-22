@@ -234,7 +234,7 @@ send_message(lua_State *L, int source, int idx_type) {
 
     int type = luaL_checkinteger(L, idx_type + 0);
     int session = 0;
-    if (lua_isnil(L, idx_type + 1)) {
+    if (lua_isnil(L, idx_type + 1)) { //如果session为nil，会增加PTYPE_TAG_ALLOCSESSION标识，这样就能返回一个session值
         type |= PTYPE_TAG_ALLOCSESSION;
     } else {
         session = luaL_checkinteger(L, idx_type + 1);

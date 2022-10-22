@@ -4,11 +4,17 @@ local skynet_core = require "skynet.core"
 local assert = assert
 
 local BUFFER_LIMIT = 128 * 1024
-local socket = {}	-- api
-local socket_pool = setmetatable( -- store all socket object
+local socket = {} -- api
+--[[
+local socket = {
+	co, --保存读取的协程(如果读的时候数据不够就把协程保存并暂停，后面数据够的时候就可以来唤醒)
+	read_required,--如果是数字，保存需要读取的字节数(这样收到数据时就可以判断够不够，进而判断要不要唤起读取协程)
+}
+]]
+local socket_pool = setmetatable(-- store all socket object
 	{},
 	{ __gc = function(p)
-		for id,v in pairs(p) do
+		for id, v in pairs(p) do
 			driver.close(id)
 			p[id] = nil
 		end
@@ -32,18 +38,18 @@ local function pause_socket(s, size)
 		return
 	end
 	if size then
-		skynet.error(string.format("Pause socket (%d) size : %d" , s.id, size))
+		skynet.error(string.format("Pause socket (%d) size : %d", s.id, size))
 	else
-		skynet.error(string.format("Pause socket (%d)" , s.id))
+		skynet.error(string.format("Pause socket (%d)", s.id))
 	end
 	driver.pause(s.id)
 	s.pause = true
-	skynet.yield()	-- there are subsequent socket messages in mqueue, maybe.
+	skynet.yield() -- there are subsequent socket messages in mqueue, maybe.
 end
 
 local function suspend(s)
 	assert(not s.co)
-	s.co = coroutine.running()
+	s.co = coroutine.running() --保存协程
 	if s.pause then
 		skynet.error(string.format("Resume socket (%d)", s.id))
 		driver.start(s.id)
@@ -61,7 +67,7 @@ end
 
 -- read skynet_socket.h for these macro
 -- SKYNET_SOCKET_TYPE_DATA = 1
-socket_message[1] = function(id, size, data)
+socket_message[1] = function(id, size, data) --把客户端发过来的数据push到该socket的缓冲池中
 	local s = socket_pool[id]
 	if s == nil then
 		skynet.error("socket: drop package from " .. id)
@@ -69,7 +75,7 @@ socket_message[1] = function(id, size, data)
 		return
 	end
 
-	local sz = driver.push(s.buffer, s.pool, data, size)
+	local sz = driver.push(s.buffer, s.pool, data, size) --lpushbuffer
 	local rr = s.read_required
 	local rrt = type(rr)
 	if rrt == "number" then
@@ -83,13 +89,13 @@ socket_message[1] = function(id, size, data)
 		end
 	else
 		if s.buffer_limit and sz > s.buffer_limit then
-			skynet.error(string.format("socket buffer overflow: fd=%d size=%d", id , sz))
+			skynet.error(string.format("socket buffer overflow: fd=%d size=%d", id, sz))
 			driver.close(id)
 			return
 		end
 		if rrt == "string" then
 			-- read line
-			if driver.readline(s.buffer,nil,rr) then
+			if driver.readline(s.buffer, nil, rr) then
 				s.read_required = nil
 				if sz > BUFFER_LIMIT then
 					pause_socket(s, sz)
@@ -103,13 +109,13 @@ socket_message[1] = function(id, size, data)
 end
 
 -- SKYNET_SOCKET_TYPE_CONNECT = 2
-socket_message[2] = function(id, ud , addr)
+socket_message[2] = function(id, ud, addr)
 	local s = socket_pool[id]
 	if s == nil then
 		return
 	end
 	-- log remote addr
-	if not s.connected then	-- resume may also post connect message
+	if not s.connected then -- resume may also post connect message
 		if s.listen then
 			s.addr = addr
 			s.port = ud
@@ -200,9 +206,9 @@ end
 
 skynet.register_protocol {
 	name = "socket",
-	id = skynet.PTYPE_SOCKET,	-- PTYPE_SOCKET = 6
+	id = skynet.PTYPE_SOCKET, -- PTYPE_SOCKET = 6
 	unpack = driver.unpack,
-	dispatch = function (_, _, t, ...)
+	dispatch = function(_, _, t, ...)
 		socket_message[t](...)
 	end
 }
@@ -210,7 +216,7 @@ skynet.register_protocol {
 local function connect(id, func)
 	local newbuffer
 	if func == nil then
-		newbuffer = driver.buffer()
+		newbuffer = driver.buffer() --lnewbuffer
 	end
 	local s = {
 		id = id,
@@ -241,7 +247,7 @@ local function connect(id, func)
 end
 
 function socket.open(addr, port)
-	local id = driver.connect(addr,port)
+	local id = driver.connect(addr, port)
 	return connect(id)
 end
 
@@ -276,7 +282,7 @@ function socket.shutdown(id)
 end
 
 function socket.close_fd(id)
-	assert(socket_pool[id] == nil,"Use socket.close instead")
+	assert(socket_pool[id] == nil, "Use socket.close instead")
 	driver.close(id)
 end
 
@@ -326,7 +332,7 @@ function socket.read(id, sz)
 		end
 	end
 
-	local ret = driver.pop(s.buffer, s.pool, sz)
+	local ret = driver.pop(s.buffer, s.pool, sz) --lpopbuffer
 	if ret then
 		return ret
 	end
@@ -335,8 +341,8 @@ function socket.read(id, sz)
 	end
 
 	assert(not s.read_required)
-	s.read_required = sz
-	suspend(s)
+	s.read_required = sz --保存需要读取的size
+	suspend(s) --挂起当前协程,当数据够或者连接断开时恢复协程
 	ret = driver.pop(s.buffer, s.pool, sz)
 	if ret then
 		return ret
@@ -402,7 +408,7 @@ end
 function socket.disconnected(id)
 	local s = socket_pool[id]
 	if s then
-		return not(s.connected or s.connecting)
+		return not (s.connected or s.connecting)
 	end
 end
 

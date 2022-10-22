@@ -22,16 +22,16 @@
 #define MAX_SOCKET_P 16
 #define MAX_EVENT 64
 #define MIN_READ_BUFFER 64
-#define SOCKET_TYPE_INVALID 0    // 初始状态
-#define SOCKET_TYPE_RESERVE 1    // 保留状态
-#define SOCKET_TYPE_PLISTEN 2    // 监听前状态
-#define SOCKET_TYPE_LISTEN 3     // 监听中状态
-#define SOCKET_TYPE_CONNECTING 4 // 连接中状态
-#define SOCKET_TYPE_CONNECTED 5  // 已连接状态
-#define SOCKET_TYPE_HALFCLOSE_READ 6
-#define SOCKET_TYPE_HALFCLOSE_WRITE 7
-#define SOCKET_TYPE_PACCEPT 8 // 已接收，但是未添加到epoll（需要start）
-#define SOCKET_TYPE_BIND 9    // 绑定系统fd(stdin、stdout、stderr)
+#define SOCKET_TYPE_INVALID 0         // 初始状态
+#define SOCKET_TYPE_RESERVE 1         // 保留状态
+#define SOCKET_TYPE_PLISTEN 2         // 监听前状态
+#define SOCKET_TYPE_LISTEN 3          // 监听中状态
+#define SOCKET_TYPE_CONNECTING 4      // 连接中状态
+#define SOCKET_TYPE_CONNECTED 5       // 已连接状态
+#define SOCKET_TYPE_HALFCLOSE_READ 6  // 半关闭剩下读
+#define SOCKET_TYPE_HALFCLOSE_WRITE 7 // 半关闭剩下写
+#define SOCKET_TYPE_PACCEPT 8         // 已接收，但是未添加到epoll（需要start）
+#define SOCKET_TYPE_BIND 9            // 绑定系统fd(stdin、stdout、stderr)
 
 #define MAX_SOCKET (1 << MAX_SOCKET_P)
 
@@ -65,9 +65,9 @@
 
 struct write_buffer {
     struct write_buffer *next;
-    const void *buffer;
-    char *ptr;
-    size_t sz;
+    const void *buffer; //发送的应用层内存块
+    char *ptr;          //记录下次发送的起点
+    size_t sz;          //表示这个buffer未发送的字节还有多少个(初始化时，就是buffer的完整大小，每发出n个字节，它就减去n)
     bool userobject;
 };
 
@@ -82,46 +82,44 @@ struct wb_list {
 };
 
 struct socket_stat {
-    uint64_t rtime;
-    uint64_t wtime;
-    uint64_t read;
-    uint64_t write;
+    uint64_t rtime; // 最近一次读取时间
+    uint64_t wtime; // 最近一次写入时间
+    uint64_t read;  // 已读取的总数据长度
+    uint64_t write; // 已写入的总数据长度
 };
 
 struct socket {
     uintptr_t opaque;        // 与之关联的服务id
     struct wb_list high;     // 高优先级写入队列
     struct wb_list low;      // 低优先级写入队列
-    int64_t wb_size;         // 待写入的字节数，0表示没有数据需要写入，过大则会发出报警
+    int64_t wb_size;         // 待发送字节数
     struct socket_stat stat; // 读写统计信息(读写的字节总数、最后读写时间)
     ATOM_ULONG sending;      // 是否有worker线程正在通过管道，发送数据包给socket线程的标记
-    int fd;
-    int id; // 自增，范围在 0x01 ~ 0x7fffffff
-    ATOM_INT type;
-    uint8_t protocol;
-    bool reading;
-    bool writing;
-    bool closing;
-    ATOM_INT udpconnecting;
-    int64_t warn_size; // 待写入数据过大时报警的阈值
+    int fd;                  // 套接字
+    int id;                  // 自增，范围在 0x01 ~ 0x7fffffff,由 skynet 分配的用来标识 socket 结构体变量的唯一标识符。之所以在有了 fd 以后还需要 id 是因为内核可能会重用 fd，并不能用 fd 来做唯一标识
+    ATOM_INT type;           // 当前连接状态
+    uint8_t protocol;        // 连接协议
+    bool reading;            // fd 的 read 监听标记
+    bool writing;            // fd 的 write 监听标记
+    bool closing;            // fd 的 close 标记
+    ATOM_INT udpconnecting;  // 正在连接中的 udp 数量，发起连接时累加，连接成功后递减
+    int64_t warn_size;       // 报警阈值,如果超过了这个值，会输出一条警告信息。阈值每次触发以后会变为原来的两倍。
     union {
-        int size;
-        uint8_t udp_address[UDP_ADDRESS_SIZE];
-    } p;                     // 联合体，tcp使用size表示每次读取数据的字节数；udp使用udp_address表示远端地址信息
-    struct spinlock dw_lock; // 从1.2开始，是skynet就添加了多线程处理机制，如果发送队列high 和low list都为空的情况下，且sending标记未被设置，则通过
-                             // worker线程直接发送，这个dw_lock的作用，就是为了避免worker线程 和socket线程，同时对同一个socket实例的send buffer进行write操作
-                             // 导致严重的bug
-    int dw_offset;           // 已经直接写入的数据大小
-    const void *dw_buffer;   // 在worker线程中，如果不能将buffer一次写完，skynet会将这块buffer的地址放在dw_buffer中，
-                             //而dw_offset标记的是，已经写了多少字节
-    size_t dw_size;
+        int size;                              // tcp使用size表示每次读取数据的字节数,会被初始化 64，并且会根据每次从 fd 中读取数据的情况增加或者减少
+        uint8_t udp_address[UDP_ADDRESS_SIZE]; // udp使用 udp_address表示远端地址信息
+    } p;
+    struct spinlock dw_lock; // 避免worker线程 和socket线程，同时对同一个socket实例的send buffer进行操作
+
+    int dw_offset;         // 已经直接写入的数据大小
+    const void *dw_buffer; // 在worker线程中，如果不能将buffer一次写完，skynet会将这块buffer的地址放在dw_buffer中
+    size_t dw_size;        //总数据大小
 };
 
 struct socket_server {
-    volatile uint64_t time; // 当前时间值，每隔2.5毫秒更新一次
+    volatile uint64_t time; // 当前时间值，每隔2.5毫秒更新一次，由 timer 线程更新
     int reserve_fd;         // for EMFILE
-    int recvctrl_fd;        // 管道读端
-    int sendctrl_fd;        // 管道写端
+    int recvctrl_fd;        // 接收命令的管道套接字
+    int sendctrl_fd;        // 发送命令的管道套接字
     int checkctrl;          // 是否需要检查内部命令的标识
     poll_fd event_fd;
     ATOM_INT alloc_id; // socket id分配器
@@ -159,9 +157,9 @@ struct request_setudp {
 };
 
 struct request_close {
-    int id;
-    int shutdown;
-    uintptr_t opaque;
+    int id;           // socket slot的id
+    int shutdown;     // 是否强制关闭，如果是，则无视发送缓存是否清空，直接强制关闭
+    uintptr_t opaque; // 和socket实例关联的服务地址
 };
 
 struct request_listen {
@@ -386,6 +384,7 @@ struct socket_server *
 socket_server_create(uint64_t time) {
     int i;
     int fd[2];
+    //skynet 使用的是 epoll 默认的水平触发模式
     poll_fd efd = sp_create();
     if (sp_invalid(efd)) {
         skynet_error(NULL, "socket-server: create event pool failed.");
@@ -396,8 +395,7 @@ socket_server_create(uint64_t time) {
         skynet_error(NULL, "socket-server: create socket pair failed.");
         return NULL;
     }
-    if (sp_add(efd, fd[0], NULL)) {
-        // add recvctrl_fd to event poll
+    if (sp_add(efd, fd[0], NULL)) { // add recvctrl_fd to event poll
         skynet_error(NULL, "socket-server: can't add server fd to event pool.");
         close(fd[0]);
         close(fd[1]);
@@ -891,8 +889,8 @@ send_buffer_(struct socket_server *ss, struct socket *s, struct socket_lock *l, 
                 return -1;
             }
             // step 3
-            if (list_uncomplete(&s->low)) {
-                raise_uncomplete(s);
+            if (list_uncomplete(&s->low)) { //如果低优先级队列某个节点只写入了一部分数据
+                raise_uncomplete(s);        //将低优先级队列该节点移到高优先级
                 return -1;
             }
             if (s->low.head)
@@ -907,7 +905,7 @@ send_buffer_(struct socket_server *ss, struct socket *s, struct socket_lock *l, 
             return -1;
         }
 
-        int err = enable_write(ss, s, false);
+        int err = enable_write(ss, s, false); //移除EPOLLOUT监听
 
         if (err) {
             return report_error(s, result, "disable write failed");
@@ -929,8 +927,8 @@ send_buffer_(struct socket_server *ss, struct socket *s, struct socket_lock *l, 
 static int
 send_buffer(struct socket_server *ss, struct socket *s, struct socket_lock *l, struct socket_message *result) {
     if (!socket_trylock(l))
-        return -1; // blocked by direct write, send later.
-    if (s->dw_buffer) {
+        return -1;      // blocked by direct write, send later.
+    if (s->dw_buffer) { //如果工作线程写了一部分的话，就把剩下的加入到高优先级队列中
         // add direct write buffer before high.head
         struct write_buffer *buf = MALLOC(sizeof(*buf));
         struct send_object so;
@@ -1029,6 +1027,7 @@ send_socket(struct socket_server *ss, struct request_send *request, struct socke
         so.free_func((void *)request->buffer);
         return -1;
     }
+    //如果队列为空的话，直接写入高优先级队列，并触发写事件，否则写入对应的优先级队列，不触发写事件
     if (send_buffer_empty(s)) {
         if (s->protocol == PROTOCOL_TCP) {
             append_sendbuffer(ss, s, request); // add to high priority list, even priority == PRIORITY_LOW
@@ -1163,12 +1162,13 @@ close_socket(struct socket_server *ss, struct request_close *request, struct soc
 
     int shutdown_read = halfclose_read(s);
 
-    if (request->shutdown || nomore_sending_data(s)) {
+    if (request->shutdown || nomore_sending_data(s)) { //如果强制关闭或者发送缓存为空，则直接关闭
         // If socket is SOCKET_TYPE_HALFCLOSE_READ, Do not raise SOCKET_CLOSE again.
         int r = shutdown_read ? -1 : SOCKET_CLOSE;
         force_close(ss, s, &l, result);
         return r;
     }
+    //否则设置个标记位，后面先让数据都发送出去
     s->closing = true;
     if (!shutdown_read) {
         // don't read socket after socket.close()
@@ -1385,23 +1385,23 @@ ctrl_cmd(struct socket_server *ss, struct socket_message *result) {
         return close_socket(ss, (struct request_close *)buffer, result);
     case 'O':
         return open_socket(ss, (struct request_open *)buffer, result);
-    case 'X':
+    case 'X': //Exit
         result->opaque = 0;
         result->id = 0;
         result->ud = 0;
         result->data = NULL;
         return SOCKET_EXIT;
     case 'W':
-        return trigger_write(ss, (struct request_send *)buffer, result);
-    case 'D':
-    case 'P': {
+        return trigger_write(ss, (struct request_send *)buffer, result); //直接触发写事件,不往写入队列里移了
+    case 'D':                                                            //Send package (high)
+    case 'P': {                                                          //Send package (low)
         int priority = (type == 'D') ? PRIORITY_HIGH : PRIORITY_LOW;
         struct request_send *request = (struct request_send *)buffer;
-        int ret = send_socket(ss, request, result, priority, NULL);
+        int ret = send_socket(ss, request, result, priority, NULL); //加入到对应的写入队列
         dec_sending_ref(ss, request->id);
         return ret;
     }
-    case 'A': {
+    case 'A': { //Send UDP package
         struct request_send_udp *rsu = (struct request_send_udp *)buffer;
         return send_socket(ss, &rsu->send, result, PRIORITY_HIGH, rsu->address);
     }
@@ -1670,7 +1670,7 @@ clear_closed_event(struct socket_server *ss, struct socket_message *result, int 
 int socket_server_poll(struct socket_server *ss, struct socket_message *result, int *more) {
     for (;;) {
         if (ss->checkctrl) {
-            if (has_cmd(ss)) {                   //如果管道里面有命令
+            if (has_cmd(ss)) {                   //检查管道里面是否有命令(select检查)
                 int type = ctrl_cmd(ss, result); //读取并处理管道里面命令
                 if (type != -1) {
                     clear_closed_event(ss, result, type);
@@ -1684,7 +1684,7 @@ int socket_server_poll(struct socket_server *ss, struct socket_message *result, 
         if (ss->event_index == ss->event_n) {
             // 事件wait
             ss->event_n = sp_wait(ss->event_fd, ss->ev, MAX_EVENT);
-            ss->checkctrl = 1;
+            ss->checkctrl = 1; //首先会把检查控制命令的变量 checkctrl 置为 1
             if (more) {
                 *more = 0;
             }
@@ -1700,7 +1700,7 @@ int socket_server_poll(struct socket_server *ss, struct socket_message *result, 
         }
         struct event *e = &ss->ev[ss->event_index++];
         struct socket *s = e->s;
-        if (s == NULL) {
+        if (s == NULL) { //如果碰到的是命令事件，则直接 continue 回到循环的最上面去处理
             // dispatch pipe message at beginning
             continue;
         }
@@ -1711,7 +1711,7 @@ int socket_server_poll(struct socket_server *ss, struct socket_message *result, 
         case SOCKET_TYPE_CONNECTING:
             // 主动连接
             return report_connect(ss, s, &l, result);
-        case SOCKET_TYPE_LISTEN: {
+        case SOCKET_TYPE_LISTEN: { //如果触发网络事件的套接字是 SOCKET_TYPE_LISTEN 状态的话，则说明触发了 accept 事件
             // 有客户端来连接
             int ok = report_accept(ss, s, result);
             if (ok > 0) {
@@ -1731,7 +1731,7 @@ int socket_server_poll(struct socket_server *ss, struct socket_message *result, 
                 int type;
                 if (s->protocol == PROTOCOL_TCP) {
                     type = forward_message_tcp(ss, s, &l, result);
-                    if (type == SOCKET_MORE) {
+                    if (type == SOCKET_MORE) { //如果本次没有读取完套接字中的数据，则会减少 event_index，使下一次循环依然处理本事件
                         --ss->event_index;
                         return SOCKET_DATA;
                     }

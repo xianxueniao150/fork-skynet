@@ -76,6 +76,7 @@ int skynet_socket_poll() {
     struct socket_message result;
     int more = 1;
     int type = socket_server_poll(ss, &result, &more);
+    //处理完网络事件后转发给对应的服务（即push到socket对应服务的消息队列）
     switch (type) {
     case SOCKET_EXIT:
         return 0;

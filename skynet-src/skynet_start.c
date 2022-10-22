@@ -69,9 +69,8 @@ static void *thread_socket(void *p) {
         if (r == 0)
             // 退出网络轮询，即网络线程退出
             break;
-        if (r < 0) {
+        if (r < 0) { // 一般r=-1,表示还有剩余网络事件需要处理
             CHECK_ABORT
-            // 一般r=-1,表示还有剩余网络事件需要处理
             continue;
         }
         // r>0, 表示捕获到新的网络事件，若所有worker全部都处于sleep，则唤醒一个
@@ -304,8 +303,7 @@ void skynet_start(struct skynet_config *config) {
     skynet_socket_init();
     skynet_profile_enable(config->profile);
 
-    struct skynet_context *ctx =
-        skynet_context_new(config->logservice, config->logger);
+    struct skynet_context *ctx = skynet_context_new(config->logservice, config->logger); // 创建logger服务
     if (ctx == NULL) {
         fprintf(stderr, "Can't launch %s service\n", config->logservice);
         exit(1);
@@ -313,7 +311,7 @@ void skynet_start(struct skynet_config *config) {
 
     skynet_handle_namehandle(skynet_context_handle(ctx), "logger");
 
-    bootstrap(ctx, config->bootstrap);
+    bootstrap(ctx, config->bootstrap); // 创建引导服务
 
     start(config->thread);
 

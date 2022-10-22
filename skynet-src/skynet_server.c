@@ -472,7 +472,7 @@ static const char *cmd_launch(struct skynet_context *context,
     strcpy(tmp, param);
     char *args = tmp;
     char *mod = strsep(&args, " \t\r\n");
-    printf("cmd_launch,args:%s,mod:%s\n", args, mod); //cmd_launch,args:launcher,mod:snlua
+    // printf("cmd_launch,args:%s,mod:%s\n", args, mod); //cmd_launch,args:service_mgr,mod:snlua
     args = strsep(&args, "\r\n");
     struct skynet_context *inst = skynet_context_new(mod, args);
     if (inst == NULL) {

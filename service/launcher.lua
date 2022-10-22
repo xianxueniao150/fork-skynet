@@ -1,6 +1,6 @@
 local skynet = require "skynet"
 local core = require "skynet.core"
-require "skynet.manager"	-- import manager apis
+require "skynet.manager" -- import manager apis
 local string = string
 
 local services = {}
@@ -9,14 +9,14 @@ local instance = {} -- for confirm (function command.LAUNCH / command.ERROR / co
 local launch_session = {} -- for command.QUERY, service_address -> session
 
 local function handle_to_address(handle)
-	return tonumber("0x" .. string.sub(handle , 2))
+	return tonumber("0x" .. string.sub(handle, 2))
 end
 
 local NORET = {}
 
 function command.LIST()
 	local list = {}
-	for k,v in pairs(services) do
+	for k, v in pairs(services) do
 		list[skynet.address(k)] = v
 	end
 	return list
@@ -64,14 +64,14 @@ function command.MEM(addr, ti)
 		if type(kb) == "string" then
 			return string.format("%s (%s)", kb, v)
 		else
-			return string.format("%.2f Kb (%s)",kb,v)
+			return string.format("%.2f Kb (%s)", kb, v)
 		end
 	end, "MEM")
 end
 
 function command.GC(addr, ti)
-	for k,v in pairs(services) do
-		skynet.send(k,"debug","GC")
+	for k, v in pairs(services) do
+		skynet.send(k, "debug", "GC")
 	end
 	return command.MEM(addr, ti)
 end
@@ -81,7 +81,7 @@ function command.REMOVE(_, handle, kill)
 	local response = instance[handle]
 	if response then
 		-- instance is dead
-		response(not kill)	-- return nil to caller of newservice, when kill == false
+		response(not kill) -- return nil to caller of newservice, when kill == false
 		instance[handle] = nil
 		launch_session[handle] = nil
 	end
@@ -91,7 +91,7 @@ function command.REMOVE(_, handle, kill)
 end
 
 local function launch_service(service, ...)
-	local param = table.concat({...}, " ")
+	local param = table.concat({ ... }, " ")
 	local inst = skynet.launch(service, param)
 	local session = skynet.context()
 	local response = skynet.response()
@@ -158,18 +158,18 @@ skynet.register_protocol {
 	name = "text",
 	id = skynet.PTYPE_TEXT,
 	unpack = skynet.tostring,
-	dispatch = function(session, address , cmd)
+	dispatch = function(session, address, cmd)
 		if cmd == "" then
 			command.LAUNCHOK(address)
 		elseif cmd == "ERROR" then
 			command.ERROR(address)
 		else
-			error ("Invalid text command " .. cmd)
+			error("Invalid text command " .. cmd)
 		end
 	end,
 }
 
-skynet.dispatch("lua", function(session, address, cmd , ...)
+skynet.dispatch("lua", function(session, address, cmd, ...)
 	cmd = string.upper(cmd)
 	local f = command[cmd]
 	if f then
@@ -178,7 +178,7 @@ skynet.dispatch("lua", function(session, address, cmd , ...)
 			skynet.ret(skynet.pack(ret))
 		end
 	else
-		skynet.ret(skynet.pack {"Unknown command"} )
+		skynet.ret(skynet.pack { "Unknown command" })
 	end
 end)
 
